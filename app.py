@@ -349,7 +349,7 @@ def render_action_buttons():
 
 def render_chat_interface():
     """Render the main chat interface"""
-    st.title("🤖 Multi-Model AI Chat Playground 🌐")
+    st.title("GenAI Chat")
     
     # Display existing messages
     for message in st.session_state.messages:
