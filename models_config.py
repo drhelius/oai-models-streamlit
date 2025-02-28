@@ -11,7 +11,7 @@ load_dotenv()
 def _discover_models():
     """
     Discover models from environment variables by looking for variable groups
-    with the pattern AZURE_OPENAI_*_PREFIX.
+    with the pattern AZURE_OPENAI_*_SUFFIX.
     """
     models = {}
     
@@ -19,13 +19,13 @@ def _discover_models():
     deployment_vars = [v for v in os.environ if v.startswith('AZURE_OPENAI_DEPLOYMENT_NAME_')]
     
     for var in deployment_vars:
-        # Extract the prefix (e.g., "STANDARD" from "AZURE_OPENAI_DEPLOYMENT_NAME_STANDARD")
-        prefix = var.split('_')[-1]
-        model_id = prefix.lower()
+        # Extract the suffix (everything after "AZURE_OPENAI_DEPLOYMENT_NAME_")
+        suffix = var.replace('AZURE_OPENAI_DEPLOYMENT_NAME_', '')
+        model_id = suffix.lower()
         
-        # Check if all required variables exist for this prefix
+        # Check if all required variables exist for this suffix
         required_vars_exist = all(
-            f"AZURE_OPENAI_{key}_{prefix}" in os.environ
+            f"AZURE_OPENAI_{key}_{suffix}" in os.environ
             for key in ["ENDPOINT", "API_KEY", "API_VERSION", "DEPLOYMENT_NAME"]
         )
         
@@ -35,7 +35,7 @@ def _discover_models():
             
             models[model_id] = {
                 "name": deployment_name,
-                "prefix": prefix
+                "suffix": suffix
             }
     
     return models
@@ -57,11 +57,11 @@ def get_model_info(model_id):
 def get_env_variable_keys(model_id):
     """Return the environment variable keys for a model"""
     model = get_model_info(model_id)
-    prefix = model["prefix"]
+    suffix = model["suffix"]
     
     return {
-        "endpoint": f"AZURE_OPENAI_ENDPOINT_{prefix}",
-        "api_key": f"AZURE_OPENAI_API_KEY_{prefix}",
-        "api_version": f"AZURE_OPENAI_API_VERSION_{prefix}",
-        "deployment_name": f"AZURE_OPENAI_DEPLOYMENT_NAME_{prefix}"
+        "endpoint": f"AZURE_OPENAI_ENDPOINT_{suffix}",
+        "api_key": f"AZURE_OPENAI_API_KEY_{suffix}",
+        "api_version": f"AZURE_OPENAI_API_VERSION_{suffix}",
+        "deployment_name": f"AZURE_OPENAI_DEPLOYMENT_NAME_{suffix}"
     }
