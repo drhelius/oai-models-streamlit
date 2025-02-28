@@ -15,7 +15,9 @@ DEFAULT_SETTINGS = {
     "use_streaming": True,
     "temperature": 0.7,
     "top_p": 1.0,
-    "max_tokens": 1000
+    "max_tokens": 1000,
+    "max_retries": 0,
+    "timeout": 60
 }
 
 # === SESSION STATE INITIALIZATION ===
@@ -34,6 +36,10 @@ def initialize_session_state():
         st.session_state.top_p = DEFAULT_SETTINGS["top_p"]
     if "max_tokens" not in st.session_state:
         st.session_state.max_tokens = DEFAULT_SETTINGS["max_tokens"]
+    if "max_retries" not in st.session_state:
+        st.session_state.max_retries = DEFAULT_SETTINGS["max_retries"]
+    if "timeout" not in st.session_state:
+        st.session_state.timeout = DEFAULT_SETTINGS["timeout"]
 
 def reset_to_defaults():
     """Reset all settings to default values"""
@@ -42,6 +48,8 @@ def reset_to_defaults():
     st.session_state.temperature = DEFAULT_SETTINGS["temperature"]
     st.session_state.top_p = DEFAULT_SETTINGS["top_p"]
     st.session_state.max_tokens = DEFAULT_SETTINGS["max_tokens"]
+    st.session_state.max_retries = DEFAULT_SETTINGS["max_retries"]
+    st.session_state.timeout = DEFAULT_SETTINGS["timeout"]
 
 # === MODEL INTERACTION ===
 
@@ -69,7 +77,9 @@ def get_openai_client(model_id):
         client = AzureOpenAI(
             azure_endpoint=endpoint,
             api_key=api_key,
-            api_version=api_version
+            api_version=api_version,
+            max_retries=st.session_state.max_retries,
+            timeout=st.session_state.timeout
         )
         
         return client, deployment_name
@@ -136,7 +146,10 @@ def render_sidebar():
     """Render the sidebar with model selection and parameters"""
     with st.sidebar:
         st.title("Chat Settings")
-        
+
+        # Action buttons
+        render_action_buttons()
+
         # System prompt configuration
         render_system_prompt_section()
         
@@ -145,10 +158,7 @@ def render_sidebar():
         
         # Generation parameters section
         temperature, top_p, max_tokens = render_generation_parameters()
-        
-        # Action buttons
-        render_action_buttons()
-        
+
         return selected_model_id, temperature, top_p, max_tokens
 
 def render_system_prompt_section():
@@ -227,6 +237,28 @@ def render_generation_parameters():
         help="Maximum number of tokens in the response"
     )
     st.session_state.max_tokens = max_tokens
+    
+    st.subheader("API Settings")
+    
+    max_retries = st.slider(
+        "Max Retries",
+        min_value=0,
+        max_value=10,
+        value=st.session_state.max_retries,
+        step=1,
+        help="Maximum number of retries for API calls"
+    )
+    st.session_state.max_retries = max_retries
+    
+    timeout = st.slider(
+        "Timeout (seconds)",
+        min_value=10,
+        max_value=300,
+        value=st.session_state.timeout,
+        step=5,
+        help="Timeout in seconds for API calls"
+    )
+    st.session_state.timeout = timeout
     
     return temperature, top_p, max_tokens
 
