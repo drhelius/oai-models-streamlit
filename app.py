@@ -20,7 +20,10 @@ DEFAULT_SETTINGS = {
     "top_p": 1.0,
     "max_tokens": 1000,
     "max_retries": 0,
-    "timeout": 60
+    "timeout": 60,
+    "selected_model_id": None,  # Will be set on first run
+    "api_type": None,  # Will be set based on model selection
+    "api_version": None  # Will be set based on model selection
 }
 
 # === SESSION STATE INITIALIZATION ===
@@ -29,46 +32,55 @@ def initialize_session_state():
     """Initialize session state variables if they don't exist"""
     if "messages" not in st.session_state:
         st.session_state.messages = []
-    if "system_prompt" not in st.session_state:
-        st.session_state.system_prompt = DEFAULT_SETTINGS["system_prompt"]
-    if "use_streaming" not in st.session_state:
-        st.session_state.use_streaming = DEFAULT_SETTINGS["use_streaming"]
-    if "temperature" not in st.session_state:
-        st.session_state.temperature = DEFAULT_SETTINGS["temperature"]
-    if "top_p" not in st.session_state:
-        st.session_state.top_p = DEFAULT_SETTINGS["top_p"]
-    if "max_tokens" not in st.session_state:
-        st.session_state.max_tokens = DEFAULT_SETTINGS["max_tokens"]
-    if "max_retries" not in st.session_state:
-        st.session_state.max_retries = DEFAULT_SETTINGS["max_retries"]
-    if "timeout" not in st.session_state:
-        st.session_state.timeout = DEFAULT_SETTINGS["timeout"]
+    
+    # Initialize all default settings in session state
+    for key, value in DEFAULT_SETTINGS.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    
+    # Set a default model on first run
+    if st.session_state.selected_model_id is None:
+        model_options = get_model_names()
+        if model_options:
+            st.session_state.selected_model_id = model_options[0][0]
+            # Initialize API details for the selected model
+            update_api_details()
 
 def reset_to_defaults():
     """Reset all settings to default values"""
-    st.session_state.system_prompt = DEFAULT_SETTINGS["system_prompt"]
-    st.session_state.use_streaming = DEFAULT_SETTINGS["use_streaming"]
-    st.session_state.temperature = DEFAULT_SETTINGS["temperature"]
-    st.session_state.top_p = DEFAULT_SETTINGS["top_p"]
-    st.session_state.max_tokens = DEFAULT_SETTINGS["max_tokens"]
-    st.session_state.max_retries = DEFAULT_SETTINGS["max_retries"]
-    st.session_state.timeout = DEFAULT_SETTINGS["timeout"]
+    for key, value in DEFAULT_SETTINGS.items():
+        if key not in ['selected_model_id', 'api_type', 'api_version']:  # Keep model selection
+            st.session_state[key] = value
 
 # === MODEL INTERACTION ===
 
-def get_client(model_id):
+def update_api_details():
+    """Update API type and version for the currently selected model"""
+    try:
+        env_keys = get_env_variable_keys(st.session_state.selected_model_id)
+        st.session_state.api_type = os.getenv(env_keys["api_type"], "openai").lower()
+        st.session_state.api_version = os.getenv(env_keys["api_version"])
+        st.session_state.deployment_name = os.getenv(env_keys["deployment_name"])
+    except Exception as e:
+        st.error(f"Error updating API details: {e}")
+
+def get_client():
     """
     Set up the client based on the selected model ID and API type.
-    Returns client, deployment name, and API type.
+    Returns client based on the current session state.
     """
     try:
+        model_id = st.session_state.selected_model_id
         env_keys = get_env_variable_keys(model_id)
         
         endpoint = os.getenv(env_keys["endpoint"])
         api_key = os.getenv(env_keys["api_key"])
         api_version = os.getenv(env_keys["api_version"])
         deployment_name = os.getenv(env_keys["deployment_name"])
-        api_type = os.getenv(env_keys["api_type"], "openai")  # Default to openai if not specified
+        
+        # Store these in session state for reference
+        st.session_state.api_version = api_version
+        st.session_state.deployment_name = deployment_name
         
         if not all([endpoint, api_key, api_version, deployment_name]):
             missing = []
@@ -79,27 +91,25 @@ def get_client(model_id):
             raise ValueError(f"Missing environment variables: {', '.join(missing)}")
         
         # Create client based on API type
-        if api_type.lower() == "azure":
-            client = ChatCompletionsClient(
+        if st.session_state.api_type == "azure":
+            return ChatCompletionsClient(
                 endpoint=endpoint,
-                credential=AzureKeyCredential(api_key),
+                credential=AzureKeyCredential(api_key)
             )
         else:  # Default to OpenAI API
-            client = AzureOpenAI(
+            return AzureOpenAI(
                 azure_endpoint=endpoint,
                 api_key=api_key,
                 api_version=api_version,
                 max_retries=st.session_state.max_retries,
                 timeout=st.session_state.timeout
             )
-        
-        return client, deployment_name, api_type.lower(), api_version
     except Exception as e:
         raise ValueError(f"Error setting up client for {model_id}: {str(e)}")
 
-def format_messages_for_api(messages, api_type):
-    """Format messages based on API type"""
-    if api_type == "azure":
+def format_messages_for_api(messages):
+    """Format messages based on API type from session state"""
+    if st.session_state.api_type == "azure":
         formatted_messages = []
         for msg in messages:
             if msg["role"] == "system":
@@ -113,7 +123,7 @@ def format_messages_for_api(messages, api_type):
         # OpenAI API format (already in the correct format)
         return messages
 
-def generate_response_streaming(client, deployment_name, messages, temperature, max_tokens, top_p, message_placeholder, api_type):
+def generate_response_streaming(client, messages, message_placeholder):
     """Generate response using streaming mode"""
     full_response = ""
     
@@ -121,14 +131,14 @@ def generate_response_streaming(client, deployment_name, messages, temperature, 
     message_placeholder.write("Thinking... 🤔")
     
     # Format messages based on API type
-    formatted_messages = format_messages_for_api(messages, api_type)
+    formatted_messages = format_messages_for_api(messages)
     
-    if api_type == "azure":
+    if st.session_state.api_type == "azure":
         stream = client.complete(
             messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
+            temperature=st.session_state.temperature,
+            max_tokens=st.session_state.max_tokens,
+            top_p=st.session_state.top_p,
             stream=True
         )
         
@@ -141,11 +151,11 @@ def generate_response_streaming(client, deployment_name, messages, temperature, 
     else:
         # Original OpenAI API implementation
         stream = client.chat.completions.create(
-            model=deployment_name,
+            model=st.session_state.deployment_name,
             messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p,
+            temperature=st.session_state.temperature,
+            max_tokens=st.session_state.max_tokens,
+            top_p=st.session_state.top_p,
             stream=True
         )
         
@@ -160,7 +170,7 @@ def generate_response_streaming(client, deployment_name, messages, temperature, 
     message_placeholder.write(full_response)
     return full_response
 
-def generate_response_non_streaming(client, deployment_name, messages, temperature, max_tokens, top_p, message_placeholder, api_type):
+def generate_response_non_streaming(client, messages, message_placeholder):
     """Generate response without streaming"""
     thinking_text = "Generating response... ⏳"
     message_placeholder.write(thinking_text)
@@ -173,24 +183,24 @@ def generate_response_non_streaming(client, deployment_name, messages, temperatu
             time.sleep(0.01) 
 
     # Format messages based on API type
-    formatted_messages = format_messages_for_api(messages, api_type)
+    formatted_messages = format_messages_for_api(messages)
     
-    if api_type == "azure":
+    if st.session_state.api_type == "azure":
         response = client.complete(
             messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p
+            temperature=st.session_state.temperature,
+            max_tokens=st.session_state.max_tokens,
+            top_p=st.session_state.top_p
         )
         full_response = response.choices[0].message.content
     else:
         # Original OpenAI API implementation
         response = client.chat.completions.create(
-            model=deployment_name,
+            model=st.session_state.deployment_name,
             messages=formatted_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=top_p
+            temperature=st.session_state.temperature,
+            max_tokens=st.session_state.max_tokens,
+            top_p=st.session_state.top_p
         )
         full_response = response.choices[0].message.content
 
@@ -214,12 +224,10 @@ def render_sidebar():
         render_system_prompt_section()
         
         # Model selection section
-        selected_model_id = render_model_section()
+        render_model_section()
         
         # Generation parameters section
-        temperature, top_p, max_tokens = render_generation_parameters()
-
-        return selected_model_id, temperature, top_p, max_tokens
+        render_generation_parameters()
 
 def render_system_prompt_section():
     """Render the system prompt configuration section"""
@@ -234,7 +242,7 @@ def render_system_prompt_section():
     st.session_state.system_prompt = system_prompt
 
 def render_model_section():
-    """Render the model selection section and return the selected model ID"""
+    """Render the model selection section"""
     st.sidebar.subheader("Model Settings")
     
     model_options = get_model_names()
@@ -246,13 +254,20 @@ def render_model_section():
     model_ids = [m[0] for m in model_options]
     model_display_names = [m[1] for m in model_options]
     
-    selected_model_index = st.sidebar.selectbox(
+    selected_model_index = model_ids.index(st.session_state.selected_model_id) if st.session_state.selected_model_id in model_ids else 0
+    
+    new_selected_index = st.sidebar.selectbox(
         "Select Model",
         range(len(model_options)),
+        index=selected_model_index,
         format_func=lambda i: model_display_names[i],
         help="Choose which deployment to use"
     )
-    selected_model_id = model_ids[selected_model_index]
+    
+    # If model changed, update selected model and API details
+    if model_ids[new_selected_index] != st.session_state.selected_model_id:
+        st.session_state.selected_model_id = model_ids[new_selected_index]
+        update_api_details()
     
     # Streaming option
     use_streaming = st.sidebar.checkbox(
@@ -261,11 +276,9 @@ def render_model_section():
         help="Toggle to enable or disable streaming of responses"
     )
     st.session_state.use_streaming = use_streaming
-    
-    return selected_model_id
 
 def render_generation_parameters():
-    """Render the generation parameters section and return the values"""
+    """Render the generation parameters section"""
     st.sidebar.subheader("Generation Parameters")
     
     temperature = st.sidebar.slider(
@@ -319,8 +332,6 @@ def render_generation_parameters():
         help="Timeout in seconds for API calls (Only for OpenAI API)"
     )
     st.session_state.timeout = timeout
-    
-    return temperature, top_p, max_tokens
 
 def render_action_buttons():
     """Render the action buttons for resetting and clearing chat"""
@@ -336,9 +347,9 @@ def render_action_buttons():
             st.session_state.messages = []
             st.rerun()
 
-def render_chat_interface(selected_model_id, temperature, top_p, max_tokens):
+def render_chat_interface():
     """Render the main chat interface"""
-    st.title("AI Chat Interface")
+    st.title("🤖 Multi-Model AI Chat Playground 🌐")
     
     # Display existing messages
     for message in st.session_state.messages:
@@ -347,9 +358,9 @@ def render_chat_interface(selected_model_id, temperature, top_p, max_tokens):
     
     # Handle new user input
     if prompt := st.chat_input("Type your message here..."):
-        process_user_message(prompt, selected_model_id, temperature, top_p, max_tokens)
+        process_user_message(prompt)
 
-def process_user_message(prompt, selected_model_id, temperature, top_p, max_tokens):
+def process_user_message(prompt):
     """Process a new user message and generate a response"""
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -363,8 +374,8 @@ def process_user_message(prompt, selected_model_id, temperature, top_p, max_toke
         message_placeholder = st.empty()
         
         try:
-            # Get client, deployment name, and API type
-            client, deployment_name, api_type, api_version = get_client(selected_model_id)
+            # Get client using current session state
+            client = get_client()
             
             # Prepare messages for API call
             messages = [{"role": "system", "content": st.session_state.system_prompt}]
@@ -377,11 +388,11 @@ def process_user_message(prompt, selected_model_id, temperature, top_p, max_toke
             if st.session_state.use_streaming:
                 with st.spinner("Thinking..."):
                     full_response = generate_response_streaming(
-                        client, deployment_name, messages, temperature, max_tokens, top_p, message_placeholder, api_type
+                        client, messages, message_placeholder
                     )
             else:
                 full_response = generate_response_non_streaming(
-                    client, deployment_name, messages, temperature, max_tokens, top_p, message_placeholder, api_type
+                    client, messages, message_placeholder
                 )
             
             # Display response metrics
@@ -402,7 +413,7 @@ def main():
     """Main application function"""
     # Page configuration
     st.set_page_config(
-        page_title="AI Chat Interface",
+        page_title="Multi Model AI Chat Playground",
         page_icon="🤖",
         layout="wide",
     )
@@ -410,23 +421,22 @@ def main():
     # Initialize session state
     initialize_session_state()
     
-    # Render sidebar and get selected values
-    selected_model_id, temperature, top_p, max_tokens = render_sidebar()
+    # Render sidebar
+    render_sidebar()
     
     # Render main chat interface
-    render_chat_interface(selected_model_id, temperature, top_p, max_tokens)
+    render_chat_interface()
     
     # Get model info for the footer
-    model_info = get_model_info(selected_model_id)
+    model_info = get_model_info(st.session_state.selected_model_id)
     model_name = model_info["name"]
     
-    # Get API type and version
-    _, _, api_type, api_version = get_client(selected_model_id)
-    api_type_display = "Azure AI Inference API" if api_type == "azure" else "Azure OpenAI API"
+    # Display API type for the footer
+    api_type_display = "Azure AI Inference API" if st.session_state.api_type == "azure" else "Azure OpenAI API"
     
     # Footer
     st.markdown("---")
-    st.caption(f"Using {api_type_display} (v{api_version}) - Current model: {model_name}")
+    st.caption(f"Using {api_type_display} (v{st.session_state.api_version}) - Current model: {model_name}")
 
 if __name__ == "__main__":
     main()
