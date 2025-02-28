@@ -11,22 +11,22 @@ load_dotenv()
 def _discover_models():
     """
     Discover models from environment variables by looking for variable groups
-    with the pattern AZURE_OPENAI_*_SUFFIX.
+    with the pattern DEPLOYMENT_NAME_*.
     """
     models = {}
     
-    # Find all variables that match AZURE_OPENAI_DEPLOYMENT_NAME_*
-    deployment_vars = [v for v in os.environ if v.startswith('AZURE_OPENAI_DEPLOYMENT_NAME_')]
+    # Find all variables that match DEPLOYMENT_NAME_*
+    deployment_vars = [v for v in os.environ if v.startswith('DEPLOYMENT_NAME_')]
     
     for var in deployment_vars:
-        # Extract the suffix (everything after "AZURE_OPENAI_DEPLOYMENT_NAME_")
-        suffix = var.replace('AZURE_OPENAI_DEPLOYMENT_NAME_', '')
+        # Extract the suffix (everything after "DEPLOYMENT_NAME_")
+        suffix = var.replace('DEPLOYMENT_NAME_', '')
         model_id = suffix.lower()
         
         # Check if all required variables exist for this suffix
         required_vars_exist = all(
-            f"AZURE_OPENAI_{key}_{suffix}" in os.environ
-            for key in ["ENDPOINT", "API_KEY", "API_VERSION", "DEPLOYMENT_NAME"]
+            f"{key}_{suffix}" in os.environ
+            for key in ["ENDPOINT", "API_KEY", "API_VERSION", "DEPLOYMENT_NAME", "API_TYPE"]
         )
         
         if required_vars_exist:
@@ -60,8 +60,9 @@ def get_env_variable_keys(model_id):
     suffix = model["suffix"]
     
     return {
-        "endpoint": f"AZURE_OPENAI_ENDPOINT_{suffix}",
-        "api_key": f"AZURE_OPENAI_API_KEY_{suffix}",
-        "api_version": f"AZURE_OPENAI_API_VERSION_{suffix}",
-        "deployment_name": f"AZURE_OPENAI_DEPLOYMENT_NAME_{suffix}"
+        "endpoint": f"ENDPOINT_{suffix}",
+        "api_key": f"API_KEY_{suffix}",
+        "api_version": f"API_VERSION_{suffix}",
+        "deployment_name": f"DEPLOYMENT_NAME_{suffix}",
+        "api_type": f"API_TYPE_{suffix}"
     }
