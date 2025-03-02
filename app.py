@@ -61,6 +61,7 @@ def update_api_details():
         st.session_state.api_type = os.getenv(env_keys["api_type"], "openai").lower()
         st.session_state.api_version = os.getenv(env_keys["api_version"])
         st.session_state.deployment_name = os.getenv(env_keys["deployment_name"])
+        st.session_state.endpoint = os.getenv(env_keys["endpoint"])
     except Exception as e:
         st.error(f"Error updating API details: {e}")
 
@@ -254,20 +255,24 @@ def render_model_section():
     model_ids = [m[0] for m in model_options]
     model_display_names = [m[1] for m in model_options]
     
-    selected_model_index = model_ids.index(st.session_state.selected_model_id) if st.session_state.selected_model_id in model_ids else 0
-    
-    new_selected_index = st.sidebar.selectbox(
+    # Use a key for the selectbox to ensure it refreshes properly
+    selected_model = st.sidebar.selectbox(
         "Select Model",
-        range(len(model_options)),
-        index=selected_model_index,
-        format_func=lambda i: model_display_names[i],
-        help="Choose which deployment to use"
+        model_ids,
+        index=model_ids.index(st.session_state.selected_model_id) if st.session_state.selected_model_id in model_ids else 0,
+        format_func=lambda id: next((name for mid, name in model_options if mid == id), id),
+        help="Choose which deployment to use",
+        key="model_selector"
     )
     
     # If model changed, update selected model and API details
-    if model_ids[new_selected_index] != st.session_state.selected_model_id:
-        st.session_state.selected_model_id = model_ids[new_selected_index]
+    if selected_model != st.session_state.selected_model_id:
+        st.session_state.selected_model_id = selected_model
         update_api_details()
+        # Clear chat history when model changes
+        st.session_state.messages = []
+        # Force a rerun to update the interface with the new model
+        st.rerun()
     
     # Streaming option
     use_streaming = st.sidebar.checkbox(
@@ -436,7 +441,7 @@ def main():
     
     # Footer
     st.markdown("---")
-    st.caption(f"Using {api_type_display} (v{st.session_state.api_version}) - Current model: {model_name}")
+    st.caption(f"Using {api_type_display} (v{st.session_state.api_version}) - Current model: {model_name} - {st.session_state.endpoint}")
 
 if __name__ == "__main__":
     main()
