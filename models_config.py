@@ -30,11 +30,11 @@ def _discover_models():
         )
         
         if required_vars_exist:
-            # Get the deployment name to use as the display name
-            deployment_name = os.environ[var]
+            # Get the display name from MODEL_{suffix} if available, otherwise use deployment name
+            display_name = os.environ.get(f"MODEL_{suffix}", os.environ[var])
             
             models[model_id] = {
-                "name": deployment_name,
+                "name": display_name,
                 "suffix": suffix
             }
     
