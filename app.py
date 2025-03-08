@@ -4,6 +4,7 @@ Models are dynamically loaded from environment variables.
 """
 import os
 import time
+import json
 import streamlit as st
 from openai import AzureOpenAI
 from azure.ai.inference import ChatCompletionsClient
@@ -15,7 +16,7 @@ from models_config import get_model_names, get_model_info, get_env_variable_keys
 
 DEFAULT_SETTINGS = {
     "system_prompt": "You are a helpful assistant that provides clear and concise information.",
-    "use_streaming": True,
+    "use_streaming": False,
     "temperature": 0.7,
     "top_p": 1.0,
     "max_tokens": 1000,
@@ -23,7 +24,8 @@ DEFAULT_SETTINGS = {
     "timeout": 60,
     "selected_model_id": None,  # Will be set on first run
     "api_type": None,  # Will be set based on model selection
-    "api_version": None  # Will be set based on model selection
+    "api_version": None,  # Will be set based on model selection
+    "show_debug": False  # New setting for debug toggle
 }
 
 # === SESSION STATE INITIALIZATION ===
@@ -128,6 +130,41 @@ def generate_response_streaming(client, messages, message_placeholder):
     """Generate response using streaming mode"""
     full_response = ""
     
+    # Create a simulated complete response structure that resembles non-streaming
+    simulated_response = {
+        "id": "simulated-streaming-response",
+        "model": st.session_state.deployment_name,
+        "created": int(time.time()),
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": ""  # Will be filled with full response at the end
+                },
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": "unknown",
+            "completion_tokens": "unknown",
+            "total_tokens": "unknown"
+        }
+    }
+    
+    debug_data = {
+        "request": {
+            "messages": messages,
+            "temperature": st.session_state.temperature,
+            "max_tokens": st.session_state.max_tokens,
+            "top_p": st.session_state.top_p,
+            "stream": True
+        },
+        "response": {},
+        "streaming_chunks": []
+    }
+    
     # First show the thinking indicator in the message area
     message_placeholder.write("Thinking... 🤔")
     
@@ -149,6 +186,24 @@ def generate_response_streaming(client, messages, message_placeholder):
                 if chunk_content is not None:
                     full_response += chunk_content
                     message_placeholder.write(full_response + "▌")
+                    # Capture sample chunk data for debugging (limit to 3 chunks)
+                    if len(debug_data["streaming_chunks"]) < 3:
+                        # Convert to dict for better formatting
+                        try:
+                            chunk_dict = {
+                                "id": getattr(update, "id", "unknown"),
+                                "created": getattr(update, "created", "unknown"),
+                                "choices": [{
+                                    "index": update.choices[0].index,
+                                    "delta": {
+                                        "content": update.choices[0].delta.content
+                                    }
+                                }]
+                            }
+                            debug_data["streaming_chunks"].append(chunk_dict)
+                        except:
+                            # Fallback if can't convert properly
+                            debug_data["streaming_chunks"].append({"chunk_data": str(update)})
     else:
         # Original OpenAI API implementation
         stream = client.chat.completions.create(
@@ -166,15 +221,40 @@ def generate_response_streaming(client, messages, message_placeholder):
                     if chunk.choices[0].delta.content is not None:
                         full_response += chunk.choices[0].delta.content
                         message_placeholder.write(full_response + "▌")
+                        # Capture sample chunk data for debugging (limit to 3 chunks)
+                        if len(debug_data["streaming_chunks"]) < 3:
+                            try:
+                                # Convert to dict for better formatting
+                                chunk_dict = chunk.model_dump()
+                                debug_data["streaming_chunks"].append(chunk_dict)
+                            except:
+                                # Fallback if model_dump not available
+                                debug_data["streaming_chunks"].append({"chunk_data": str(chunk)})
     
     # Remove the cursor and display final response
     message_placeholder.write(full_response)
-    return full_response
+    
+    # Update simulated complete response with full content
+    simulated_response["choices"][0]["message"]["content"] = full_response
+    debug_data["response"] = simulated_response
+    
+    return full_response, debug_data
 
 def generate_response_non_streaming(client, messages, message_placeholder):
     """Generate response without streaming"""
     thinking_text = "Generating response... ⏳"
     message_placeholder.write(thinking_text)
+    
+    debug_data = {
+        "request": {
+            "messages": messages,
+            "temperature": st.session_state.temperature,
+            "max_tokens": st.session_state.max_tokens,
+            "top_p": st.session_state.top_p,
+            "stream": False
+        },
+        "response": {}
+    }
     
     # Visual feedback with progress bar
     progress_bar = st.progress(0)
@@ -194,6 +274,26 @@ def generate_response_non_streaming(client, messages, message_placeholder):
             top_p=st.session_state.top_p
         )
         full_response = response.choices[0].message.content
+        
+        # Convert to dict for better formatting in debug data
+        try:
+            # First try to convert to a dict if possible
+            response_dict = {
+                "id": getattr(response, "id", "unknown"),
+                "created": getattr(response, "created", int(time.time())),
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": full_response
+                    },
+                    "finish_reason": getattr(response.choices[0], "finish_reason", "stop")
+                }]
+            }
+            debug_data["response"] = response_dict
+        except:
+            # Fallback to string representation
+            debug_data["response"] = {"raw_response": str(response)}
     else:
         # Original OpenAI API implementation
         response = client.chat.completions.create(
@@ -204,12 +304,21 @@ def generate_response_non_streaming(client, messages, message_placeholder):
             top_p=st.session_state.top_p
         )
         full_response = response.choices[0].message.content
+        
+        # Convert response to dict for better formatting in debug data
+        try:
+            debug_data["response"] = response.model_dump()
+        except:
+            try:
+                debug_data["response"] = json.loads(response.json())
+            except:
+                debug_data["response"] = {"raw_response": str(response)}
 
     # Remove progress bar after completion
     progress_bar.empty()
     
     message_placeholder.write(full_response)
-    return full_response
+    return full_response, debug_data
 
 # === UI COMPONENTS ===
 
@@ -281,6 +390,14 @@ def render_model_section():
         help="Toggle to enable or disable streaming of responses"
     )
     st.session_state.use_streaming = use_streaming
+    
+    # Debug toggle option
+    show_debug = st.sidebar.checkbox(
+        "Show Debug Data",
+        value=st.session_state.show_debug,
+        help="Show request/response debugging information"
+    )
+    st.session_state.show_debug = show_debug
 
 def render_generation_parameters():
     """Render the generation parameters section"""
@@ -357,9 +474,16 @@ def render_chat_interface():
     st.title("GenAI Chat")
     
     # Display existing messages
-    for message in st.session_state.messages:
+    for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.write(message["content"])
+            
+            # Show debug expander if enabled and debug data exists
+            if st.session_state.show_debug and "debug_data" in message:
+                try:
+                    render_debug_data(message["debug_data"])
+                except Exception as e:
+                    st.error(f"Error rendering debug data: {str(e)}")
     
     # Handle new user input
     if prompt := st.chat_input("Type your message here..."):
@@ -377,6 +501,7 @@ def process_user_message(prompt):
     # Display assistant message with a spinner while processing
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
+        debug_container = st.container()
         
         try:
             # Get client using current session state
@@ -392,25 +517,87 @@ def process_user_message(prompt):
             # Generate response based on selected method
             if st.session_state.use_streaming:
                 with st.spinner("Thinking..."):
-                    full_response = generate_response_streaming(
+                    full_response, debug_data = generate_response_streaming(
                         client, messages, message_placeholder
                     )
             else:
-                full_response = generate_response_non_streaming(
+                full_response, debug_data = generate_response_non_streaming(
                     client, messages, message_placeholder
                 )
             
-            # Display response metrics
+            # Calculate and store response time
             response_time = time.time() - start_time
+            debug_data["metrics"] = {
+                "response_time_seconds": round(response_time, 3),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # Display response metrics
             st.caption(f"Response time: {response_time:.2f} seconds")
             
-            # Add assistant response to chat history
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # Add assistant response to chat history with debug data
+            st.session_state.messages.append({
+                "role": "assistant", 
+                "content": full_response,
+                "debug_data": debug_data
+            })
+            
+            # Show debug data immediately if enabled
+            if st.session_state.show_debug:
+                with debug_container:
+                    render_debug_data(debug_data)
             
         except Exception as e:
             error_message = f"Sorry, an error occurred: {str(e)}"
             st.error(error_message)
             st.session_state.messages.append({"role": "assistant", "content": error_message})
+
+def render_debug_data(debug_data):
+    """Render debug data in a clean, formatted way"""
+    with st.expander("🔍 Debug Data"):
+        # Display metrics in a clean banner at the top
+        if "metrics" in debug_data:
+            metrics = debug_data["metrics"]
+            cols = st.columns([1, 1])
+            with cols[0]:
+                st.markdown(f"**⏱️ Response Time:** {metrics['response_time_seconds']} seconds")
+            with cols[1]:
+                st.markdown(f"**🕒 Timestamp:** {metrics['timestamp']}")
+            
+        
+        # Check if this is a streaming response by looking for streaming_chunks key
+        is_streaming_data = "streaming_chunks" in debug_data
+        
+        if is_streaming_data:
+            # This is a streaming debug data
+            tab1, tab2, tab3 = st.tabs(["📋 Request", "📊 Response", "🔄 Streaming Chunks"])
+            
+            with tab1:
+                st.json(debug_data["request"])
+                
+            with tab2:
+                st.json(debug_data["response"])
+            
+            with tab3:
+                st.subheader("Sample Stream Chunks")
+                chunks = debug_data["streaming_chunks"]
+                if not chunks:
+                    st.info("No streaming chunks captured")
+                else:
+                    for i, chunk in enumerate(chunks):
+                        st.markdown(f"**Chunk {i+1}**")
+                        st.json(chunk)
+                        if i < len(chunks) - 1:
+                            st.divider()
+        else:
+            # This is a non-streaming debug data
+            tab1, tab2 = st.tabs(["📋 Request", "📊 Response"])
+            
+            with tab1:
+                st.json(debug_data["request"])
+            
+            with tab2:
+                st.json(debug_data["response"])
 
 # === MAIN APP ===
 
